@@ -59,14 +59,24 @@ class Model(torch.nn.Module):
         return x
 
 
+class AdditionModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv = torch.nn.Conv2d(1, 1, 3)
+        self.li = norse.torch.LICell()
+
+    def forward(self, x):
+        x = self.conv(x)
+        y = self.li(x)
+        z = x + y
+        return z
+
+
 def test_fx_trace():
     model = Model()
     tracer = CustomisableTracer(customed_leaf_module=(norse.torch.LICell,))
     tracer_graph = tracer.trace(model)
     traced_model = GraphModule(tracer.root, tracer_graph, "test_fx_network")
-
-    graph = traced_model.graph
-    print(graph)
     named_modules = OrderedDict(traced_model.named_modules())
 
     # two internal modules and the model itself
@@ -77,5 +87,34 @@ def test_fx_trace():
     print(named_modules)
 
 
+def test_addition_trace():
+    model = AdditionModel()
+    tracer = CustomisableTracer(customed_leaf_module=(norse.torch.LICell,))
+    tracer_graph = tracer.trace(model)
+    traced_model = GraphModule(tracer.root, tracer_graph, "test_addition_network")
+
+    named_modules = OrderedDict(traced_model.named_modules())
+
+    # two internal modules and the model itself
+    assert len(named_modules) == 3
+    assert "conv" in named_modules
+    assert "li" in named_modules
+
+    graph = traced_model.graph
+    has_addition = False
+    for node in graph.nodes:
+        if node.op == "call_function" and node.name == "add":
+            has_addition = True
+
+            # x in the model; which comes from the conv layer
+            assert node.args[0].name == "conv"
+            # y in the model; which comes from the LICell layer
+            assert node.args[1].name == "li"
+
+            break
+    assert has_addition
+
+
 if __name__ == "__main__":
     test_fx_trace()
+    test_addition_trace()
